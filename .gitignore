@@ -1,0 +1,14 @@
+# 环境变量（含 API 密钥，切勿提交）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE 个人状态（workspace.xml 已由 .idea/.gitignore 覆盖，这里再声明一次以防被 IDE 重写）
+.idea/workspace.xml
+.idea/material_theme_project_new.xml
