@@ -23,7 +23,7 @@
 | [s05 TodoWriter](s05_todo_writer/) | 先计划再执行 | Pydantic schema / 跨元素校验 / 三轮催促 |
 | [s06 Subagent](s06_subagent/) | 上下文隔离 | 全新 `messages` / 只回传最终结论 |
 | [s07 SkillLoader](s07_skill_loader/) | 技能按需加载 | 目录常驻 / frontmatter 扫描 / 渐进式披露 |
-| s08 Context Compact | 上下文压缩 | 工具结果预算 / 微压缩 / 历史摘要 |
+| [s08 ContextCompact](s08_context_compact/) | 上下文压缩 | 三区划分 / 比例配额 / 官方词表计量 / 中间件注入 |
 | s09 Memory | 记忆系统 | 选取 / 抽取 / 归并 |
 | s10 Task System | 任务系统 | `TaskRecord` / `blockedBy` / 落盘持久化 |
 | s11 Background Tasks | 后台任务 | 线程执行 / 通知队列 |
@@ -53,15 +53,38 @@ cp .env.example .env      # 然后填入 DEEPSEEK_API_KEY
 
 ## 运行
 
+### 命令行
+
 各章入口脚本所在目录会进入 `sys.path[0]`，所以**从仓库根直接跑**即可：
 
 ```bash
 uv run python s01_loop/agent_mvp.py
 uv run python s04_hooks/main_loop.py
 uv run python s07_skill_loader/main_loop.py
+uv run python s08_context_compact/main_loop.py
 ```
 
 进入后输入问题、回车发送，输入 `q` / `exit` 退出。
+
+### IDE（PyCharm）
+
+**章节目录才是事实上的源码根。** 各章内部写的是 `from config import ...`、
+`from tools.pwsh import pwsh` 这种绝对导入，都假设自己所在的目录在 `sys.path` 上。
+
+命令行跑的时候这一条自动成立（`python <脚本>` 会把脚本所在目录放进 `sys.path[0]`），
+**IDE 不会** —— PyCharm 默认只认仓库根和 site-packages，于是章节目录下的
+`tools/`、`hooks/`、`config.py` 全被标红（`Unresolved reference`），补全和跳转也一并失效。
+
+所以**每开一章都要先标一次**（标的是**章节目录**，不是仓库根）：
+
+```
+右键 s08_context_compact/  →  Mark Directory as  →  Sources Root
+（旧版中文界面：标记目录为 → 源代码根目录）
+```
+
+Run Configuration 里同理：**Working directory 设成章节目录本身**。s04+ 的 `WORKDIR`
+取自 `__file__`，不受影响；但 s01–s03 用的是 `os.getcwd()`，在仓库根启动的话
+工作区会跟着变成仓库根（见下面「容易踩的点」第 1 条）。
 
 ## 架构演进
 
@@ -86,7 +109,19 @@ s07_skill_loader/   main_loop.py
                     utils/build_system_prompt.py     主/子代理两套系统提示
                     tools/skill_loader.py            SKILL.md 扫描 + 按需加载
                     skills/code-review/SKILL.md      示例技能
+s08_context_compact/main_loop.py
+                    middleware/                      中间件层（层与件分开）
+                        __init__.py                  组装点：注入 + 读本项目配置
+                        compaction/                  压缩，这里的「一个件」
+                            wiring.py                接线：who / when / 报错怎么办
+                            context_compact.py       分区 + 配额 + 管线
+                            archive.py               两个存储 + 标记 + 指针
+                            tokenizer.py             官方词表的懒加载 + get_token
+                            estimate.py              消息 → token
 ```
+
+`s08` 是第一次**完全不碰循环**的章节：压缩被注入在模型外层，`main_loop.py` 里
+除了建件和注入那两行，`agent_loop` 与 s07 逐字节相同。
 
 ## 两个容易踩的点
 

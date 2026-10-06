@@ -11,6 +11,8 @@ from utils.execute_tool import execute_tool
 from tools.tools_register import TOOLS, TOOLS_HANDERS
 from utils.build_system_prompt import SYSTEM_PROMPT
 
+from middleware import build_compaction, inject
+
 load_dotenv()
 
 model = init_chat_model(
@@ -19,7 +21,11 @@ model = init_chat_model(
     timeout = 300,
 )
 
-model_with_tools = model.bind_tools(TOOLS)
+# 压缩是**注入**进来的，不写在循环里：套在模型外面，
+# 每次 invoke 前就地处理 messages，循环对此一无所知。
+COMPACTION = build_compaction(model)                    # 手动 /compact 要用它
+model_with_tools = inject(model.bind_tools(TOOLS), COMPACTION)
+
 
 # =============================  主循环  =============================
 def agent_loop(messages):
@@ -59,19 +65,22 @@ def agent_loop(messages):
 
 if __name__ == "__main__":
     print(os.getcwd())
-    print("s07: Skill Loading - catalog first, full content on demand")
-    print("Enter a question, press Enter to send. Type q to quit.\n")
+    print("s08: Context Compaction - partition, quota, and loss ordered by age")
+    print("Enter a question, press Enter to send. Type q to quit.")
+    print("Type /compact [focus] to compact now.\n")
 
 
     history = [SystemMessage(content=SYSTEM_PROMPT)]
 
     while True:
         try:
-            query = input("\033[36ms07 >> \033[0m")
+            query = input("\033[36ms08 >> \033[0m")
         except (EOFError, KeyboardInterrupt):
             break
         if query.strip().lower() in ("q", "exit", "bye", ""):
             break
+        if COMPACTION.handle_command(query, history):
+            continue
         trigger_hooks("UserPromptSubmit", query)
         history.append(HumanMessage(content=query))
         agent_loop(history)

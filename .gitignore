@@ -9,6 +9,14 @@ __pycache__/
 .venv/
 venv/
 
+
+# DeepSeek 官方词表（7.8MB，首次计数时自动拉，不进版本库）
+.models/
+
+# s08 运行产物：归档与工具结果原文。是运行时状态，不是源码。
+.transcripts/
+.tool-results/
+
 # IDE 个人状态（workspace.xml 已由 .idea/.gitignore 覆盖，这里再声明一次以防被 IDE 重写）
 .idea/workspace.xml
 .idea/material_theme_project_new.xml
