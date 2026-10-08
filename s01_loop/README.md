@@ -1,8 +1,10 @@
-# s01: Agent 主循环 — 从零搭起第一个 while
+# s01: Agent Loop — 一个循环就够了
 
 `s01` → [s02](../s02_tools/) → [s03](../s03_permission/) → [s04](../s04_hooks/) → [s05](../s05_todo_writer/) → [s06](../s06_subagent/) → [s07](../s07_skill_loader/) → s08 → s09 → s10 → s11 → s12 → s13 → s14 → s15 → s16 → s17
 
-> *「一个循环 + 一个工具，就是一个 Agent」*
+> *"One loop & a shell is all you need"* — 一个工具 + 一个循环 = 一个 Agent。
+>
+> **Harness 层**: 循环 — 模型与真实世界的第一道连接。
 
 ---
 

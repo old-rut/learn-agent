@@ -1,8 +1,10 @@
-# s07: SkillLoader — 目录常驻，正文按需
+# s07: SkillLoader — 用到时再加载
 
 [s01](../s01_loop/) → [s02](../s02_tools/) → [s03](../s03_permission/) → [s04](../s04_hooks/) → [s05](../s05_todo_writer/) → [s06](../s06_subagent/) → `s07` → s08 → s09 → s10 → s11 → s12 → s13 → s14 → s15 → s16 → s17
 
-> *「提示词不是写得越多越好，是让模型知道有什么、需要时再拿」*
+> system prompt 保存技能目录；`load_skill` 返回完整的 `SKILL.md`。
+>
+> **Harness 层**: 知识加载 — 让模型先知道有哪些技能，再按名称读取内容。
 
 ---
 

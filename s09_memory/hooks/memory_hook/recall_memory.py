@@ -12,6 +12,15 @@ from hooks.memory_hook.memory_store import model
 
 # Recall
 
+# 目录是 markdown 链接、记录带 source 文件名，模型会把它们读成"可打开的文件"
+# 而跑去 read_file —— 全文其实已经注入。这句话就是来堵这个的。
+RECALL_NOTE = (
+    "Below is long-term memory about the user, recalled from earlier sessions. "
+    "The content is already included here — treat it as known background and "
+    "do not read the memory files again unless it is genuinely necessary."
+)
+
+
 def recent_user_text(messages: list, max_turns: int = 3) -> str:
     turns = []
     for message in reversed(messages):
@@ -90,9 +99,12 @@ def load_memories(messages: list) -> None:
     index = read_memory_index()
 
     content = SYSTEM_PROMPT
+    if index or relevant_memories:          # 没有东西可注入时别硬加说明和空标题
+        content += f"\n{RECALL_NOTE}"
     if index:
-        content += f"Memory catalog:\n{index}"
-    content += f"\nRelevant memory records:\n{relevant_memories}"
+        content += f"\nMemory catalog:\n{index}"
+    if relevant_memories:
+        content += f"\nRelevant memory records:\n{relevant_memories}"
     for message in messages:
         if isinstance(message, SystemMessage):
             message.content = content

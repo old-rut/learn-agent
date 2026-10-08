@@ -16,12 +16,15 @@ from hooks.memory_hook.memory_store import (
 from utils.extract_text import extract_text
 
 PARSE_PROMPT = (
-    "Turn the user's instruction into one memory record. "
-    "Return a JSON array with exactly one object having name, description, "
-    "and body. `name` is a short title, `description` is one line, `body` "
-    "keeps the full detail verbatim. Do not judge whether it is worth "
-    "remembering — the user already asked for it. Return [] only if the "
-    "instruction is empty."
+    "Turn the user's instruction into one memory record. Return a JSON array "
+    "with exactly one object having name, description, and body. `name` is a "
+    "short title, `description` is one line. `body` states the fact in the "
+    "third person and stands on its own: it will be read in a later session "
+    "that cannot see this conversation, so write \"the user ...\" rather than "
+    "\"I ...\", spell out anything a bare \"this\" would have pointed at, and "
+    "keep every specific (paths, names, versions) instead of paraphrasing it "
+    "away. Do not judge whether it is worth remembering — the user already "
+    "asked for it. Return [] only if the instruction is empty."
 )
 
 

@@ -1,8 +1,10 @@
-# s02: Tools — 把「一个工具」扩成「一套工具」
+# s02: Tools — 多加一个工具，只加一行
 
 [s01](../s01_loop/) → `s02` → [s03](../s03_permission/) → [s04](../s04_hooks/) → [s05](../s05_todo_writer/) → [s06](../s06_subagent/) → [s07](../s07_skill_loader/) → s08 → s09 → s10 → s11 → s12 → s13 → s14 → s15 → s16 → s17
 
-> *「工具不是越多越好，是越不容易被用错越好」*
+> *"加一个工具，只加一个 handler"* — 循环不用动，新工具注册进 `TOOLS` / `TOOLS_HANDERS` 就行。
+>
+> **Harness 层**: 工具分发 — 扩展模型能触达的边界。
 
 ---
 

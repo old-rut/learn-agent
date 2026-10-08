@@ -24,7 +24,7 @@
 | [s06 Subagent](s06_subagent/) | 上下文隔离 | 全新 `messages` / 只回传最终结论 |
 | [s07 SkillLoader](s07_skill_loader/) | 技能按需加载 | 目录常驻 / frontmatter 扫描 / 渐进式披露 |
 | [s08 ContextCompact](s08_context_compact/) | 上下文压缩 | 三区划分 / 比例配额 / 官方词表计量 / 中间件注入 |
-| s09 Memory | 记忆系统 | 选取 / 抽取 / 归并 |
+| [s09 Memory](s09_memory/) | 记忆系统 | PreAgent 召回 / PostAgent 提炼 / 去重与合并 / 显式 `/remember` |
 | s10 Task System | 任务系统 | `TaskRecord` / `blockedBy` / 落盘持久化 |
 | s11 Background Tasks | 后台任务 | 线程执行 / 通知队列 |
 | s12 Cron Scheduler | 定时调度 | 持久化调度 / 会话级触发 |
@@ -62,6 +62,7 @@ uv run python s01_loop/agent_mvp.py
 uv run python s04_hooks/main_loop.py
 uv run python s07_skill_loader/main_loop.py
 uv run python s08_context_compact/main_loop.py
+uv run python s09_memory/main_loop.py
 ```
 
 进入后输入问题、回车发送，输入 `q` / `exit` 退出。
@@ -118,10 +119,15 @@ s08_context_compact/main_loop.py
                             archive.py               两个存储 + 标记 + 指针
                             tokenizer.py             官方词表的懒加载 + get_token
                             estimate.py              消息 → token
+s09_memory/         main_loop.py                     agent_loop 33 行 → 35 行
+                    commands.py                      命令层：注册表 + 分发
+                    hooks/memory_hook/               记忆子系统
+                        memory_store.py              读写 + 索引 + 去重 + 路径守卫
+                        recall_memory.py             PreAgent：选 + 注入
+                        extract_memory.py            PostAgent：提炼 + 合并
+                        memory_commands.py           /remember、/memories
 ```
 
-`s08` 是第一次**完全不碰循环**的章节：压缩被注入在模型外层，`main_loop.py` 里
-除了建件和注入那两行，`agent_loop` 与 s07 逐字节相同。
 
 ## 两个容易踩的点
 
@@ -149,7 +155,8 @@ uv run python -m s04_hooks.main_loop     # ❌ ModuleNotFoundError: No module na
 该项目以 **MIT 许可证**发布，版权归其作者所有。
 
 这不是 fork，是一次**重新实现**。沿用下来的有「每章引入一个机制、主循环本身不变」这条推进方式、
-章节划分，以及各章节 README 的组织形式 —— s01 的引言即译自该项目的章节 README。
+章节划分，以及各章节 README 的组织形式 —— 各章的引言与 **Harness 层** 定位直接取自该项目的
+中文 README（[`README.zh.md`](https://github.com/shareAI-lab/learn-claude-code)），未作改写。
 
 代码全部独立编写，模型接入用的是 LangChain 的
 `init_chat_model` / `@tool` / `bind_tools`，运行环境是 Windows + PowerShell 7。
