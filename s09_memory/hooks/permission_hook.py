@@ -137,6 +137,7 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
 def permission_hook(tool_call)  -> str | None:
     name = tool_call["name"]
     args = tool_call["args"]
+    print(f"\033[90m[HOOK] PreToolUse: permission gate {name}\033[0m")
     # 闸门 1: 硬拒绝
     if name == "pwsh":
         reason = check_deny_list(args.get('command', ''))

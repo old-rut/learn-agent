@@ -5,6 +5,7 @@ from langchain_core.messages import (
     AIMessage, HumanMessage, SystemMessage, ToolMessage,
 )
 from langchain.chat_models import init_chat_model
+from commands import register, run_command
 from hooks.trigger_hooks import trigger_hooks
 from utils.execute_tool import execute_tool
 
@@ -23,13 +24,18 @@ model = init_chat_model(
 
 # 压缩是**注入**进来的，不写在循环里：套在模型外面，
 # 每次 invoke 前就地处理 messages，循环对此一无所知。
-COMPACTION = build_compaction(model)                    # 手动 /compact 要用它
+COMPACTION = build_compaction(model)
 model_with_tools = inject(model.bind_tools(TOOLS), COMPACTION)
+
+# 命令注册。压缩器是运行时对象，命令层不认识它，所以在这一层挂上去 ——
+# 跟上面建它的是同一个组装点。
+register("/compact", COMPACTION.compact_now)
 
 
 # =============================  主循环  =============================
 def agent_loop(messages):
     rounds_since_todo = 0
+    trigger_hooks("PreAgent", messages)
     while True:
         response = model_with_tools.invoke(messages)
 
@@ -40,6 +46,7 @@ def agent_loop(messages):
             if force:
                 messages.append(HumanMessage(content=force))
                 continue
+            trigger_hooks("PostAgent", messages)
             return
 
         used_todo = False
@@ -65,21 +72,20 @@ def agent_loop(messages):
 
 if __name__ == "__main__":
     print(os.getcwd())
-    print("s08: Context Compaction - partition, quota, and loss ordered by age")
-    print("Enter a question, press Enter to send. Type q to quit.")
-    print("Type /compact [focus] to compact now.\n")
+    print("s09: Memory - selective knowledge across sessions")
+    print("Enter a question, press Enter to send. Type q to quit.\n")
 
 
     history = [SystemMessage(content=SYSTEM_PROMPT)]
 
     while True:
         try:
-            query = input("\033[36ms08 >> \033[0m")
+            query = input("\033[36ms09 >> \033[0m")
         except (EOFError, KeyboardInterrupt):
             break
         if query.strip().lower() in ("q", "exit", "bye", ""):
             break
-        if COMPACTION.handle_command(query, history):
+        if run_command(query, history):
             continue
         trigger_hooks("UserPromptSubmit", query)
         history.append(HumanMessage(content=query))

@@ -6,13 +6,13 @@ def log_hook(tool_call: dict):
     name = tool_call.get("name", "unknown")
     args = tool_call.get("args") or {}
     args_preview = str(list(args.values())[:2])[:60]
-    print(f"\033[90m[HOOK] {name}({args_preview})\033[0m")
+    print(f"\033[90m[HOOK] PreToolUse: {name}({args_preview})\033[0m")
     return None
 
 def large_output_hook(tool_call, output):
     """PostToolUse: warn on large output."""
     if len(str(output)) > 10000:
-        print(f"\033[33m[HOOK] Large output from {tool_call['name']}: {len(str(output))} chars\033[0m")
+        print(f"\033[33m[HOOK] PostToolUse: large output from {tool_call['name']} ({len(str(output))} chars)\033[0m")
     return None
 
 # UserPromptSubmit hook: log user input before it reaches the LLM
