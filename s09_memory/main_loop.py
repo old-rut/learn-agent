@@ -73,7 +73,8 @@ def agent_loop(messages):
 if __name__ == "__main__":
     print(os.getcwd())
     print("s09: Memory - selective knowledge across sessions")
-    print("Enter a question, press Enter to send. Type q to quit.\n")
+    print("Enter a question, press Enter to send. Type q to quit.")
+    print("Type /remember <text> to save a memory, /memories to list them.\n")
 
 
     history = [SystemMessage(content=SYSTEM_PROMPT)]
