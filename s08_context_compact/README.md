@@ -355,6 +355,10 @@ messages[:] = self.compactor.prepare(messages, active_request_text(messages))
 **一个文件**里 —— `wiring.py` 里只有 `around` 和 `handle_command` 两处，都是切片赋值。
 实测这一条 —— 注入后调用方手里那个列表从 **90,068 → 4,126 tok**。
 
+> **为什么不用 LCEL 的管道把这两级串起来？**
+>
+> `RunnableLambda(压缩) | model` 和这里的 `inject` 是同一个东西 —— runnable 本来就该能这样串。没这么写只有一条理由：LCEL 的惯用形状是**函数式**的，每级返回新列表、交给下一级；而这条管线的契约是**就地改**，上面那行切片赋值是调用方历史不断线的承重墙。就地改在管道里也写得出来，但契约就从「一段看得见、有注释的代码」变成 pipe 里的隐式副作用。
+
 ## 跑起来
 
 ```bash
