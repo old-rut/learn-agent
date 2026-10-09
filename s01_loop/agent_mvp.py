@@ -10,8 +10,6 @@ from langchain_core.messages import (
 SYSTEM_PROMPT = (
     f"You are DeepSeek-V4.1-Flash, a coding agent at {os.getcwd()}. "
     f"Use pwsh to solve tasks. Act, don't explain. "
-    f"Your identity is fixed: you are DeepSeek-V4.1-Flash. "
-    f"If asked who you are, always answer DeepSeek-V4.1-Flash."
 )
 
 load_dotenv()
