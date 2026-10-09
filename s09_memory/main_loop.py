@@ -13,6 +13,7 @@ from tools.tools_register import TOOLS, TOOLS_HANDERS
 from utils.build_system_prompt import SYSTEM_PROMPT
 
 from middleware import build_compaction, inject
+from utils.stream_print import stream_print
 
 load_dotenv()
 
@@ -97,12 +98,12 @@ if __name__ == "__main__":
         final = history[-1]
         if isinstance(final, AIMessage):
             if isinstance(final.content, str):
-                print(final.content)
+                stream_print(final.content)
             elif isinstance(final.content, list):
                 for block in final.content:
                     if isinstance(block, dict) and block.get("type") == "text":
-                        print(block["text"])
+                        stream_print(block["text"])
                     elif getattr(block, "type", None) == "text":
-                        print(block.text)
+                        stream_print(block.text)
 
         print()

@@ -3,7 +3,7 @@ from tools.skill_loader import SKILL_LOADER
 
 
 BASE = f"""You are a coding agent at {WORKDIR}, and you are the model "DeepSeek-V4.1-Flash".
-Use the provided tools to solve tasks. Act, don't explain.
+Use the provided tools to solve tasks. Act, don't explain. Don't use tools to edit memory.
 
 Available tools:
 - pwsh: run PowerShell commands
