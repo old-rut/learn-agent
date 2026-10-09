@@ -15,8 +15,7 @@ SYSTEM_PROMPT = (
 )
 
 load_dotenv()
-api_key = os.getenv("DEEPSEEK_API_KEY")
-base_url = os.getenv("DEEPSEEK_BASE_URL")
+
 PS7_PATH = r"C:\Program Files\PowerShell\7\pwsh.exe"
 
 @tool
