@@ -25,7 +25,7 @@
 | [s07 SkillLoader](s07_skill_loader/) | 技能按需加载 | 目录常驻 / frontmatter 扫描 / 渐进式披露 |
 | [s08 ContextCompact](s08_context_compact/) | 上下文压缩 | 三区划分 / 比例配额 / 官方词表计量 / 中间件注入 |
 | [s09 Memory](s09_memory/) | 记忆系统 | PreAgent 召回 / PostAgent 提炼 / 去重与合并 / 显式 `/remember` |
-| s10 Task System | 任务系统 | `TaskRecord` / `blockedBy` / 落盘持久化 |
+| [s10 Task System](s10_task_system/) | 任务系统 | 一任务一 JSON / `blocked_by` 依赖图（带环检测）/ claim 认领、complete 解锁 / 压缩时从文件重注入 |
 | s11 Background Tasks | 后台任务 | 线程执行 / 通知队列 |
 | s12 Cron Scheduler | 定时调度 | 持久化调度 / 会话级触发 |
 | s13 Agent Teams | 智能体团队 | 常驻队友 / 原子认领 / 任务级 worktree / 类型化协议 |
@@ -63,6 +63,7 @@ uv run python s04_hooks/main_loop.py
 uv run python s07_skill_loader/main_loop.py
 uv run python s08_context_compact/main_loop.py
 uv run python s09_memory/main_loop.py
+uv run python s10_task_system/main_loop.py
 ```
 
 进入后输入问题、回车发送，输入 `q` / `exit` 退出。
@@ -126,6 +127,9 @@ s09_memory/         main_loop.py                     agent_loop 33 行 → 35 �
                         recall_memory.py             PreAgent：选 + 注入
                         extract_memory.py            PostAgent：提炼 + 合并
                         memory_commands.py           /remember、/memories
+s10_task_system/    main_loop.py                     agent_loop 35 行 → 23 行（删掉催促）
+                    tools/task_system.py             Task / TaskStore / 一任务一 JSON
+                    utils/build_system_prompt.py     MAIN_DELEGATION 换成任务工作流
 ```
 
 
