@@ -35,7 +35,6 @@ register("/compact", COMPACTION.compact_now)
 
 # =============================  主循环  =============================
 def agent_loop(messages):
-    rounds_since_todo = 0
     trigger_hooks("PreAgent", messages)
     while True:
         response = model_with_tools.invoke(messages)
@@ -50,7 +49,6 @@ def agent_loop(messages):
             trigger_hooks("PostAgent", messages)
             return
 
-        used_todo = False
         for tool_call in response.tool_calls:
 
             output = execute_tool(tool_call, TOOLS_HANDERS)
@@ -60,29 +58,18 @@ def agent_loop(messages):
                 tool_call_id = tool_call["id"],
                 name = tool_call["name"],))
 
-            if tool_call["name"] == "todo_writer":
-                used_todo = True
-
-        rounds_since_todo = 0 if used_todo else rounds_since_todo + 1
-        if rounds_since_todo >= 3:
-            messages.append(HumanMessage(
-                content="<reminder>Update your todos.</reminder>"
-            ))
-            rounds_since_todo = 0
-
 
 if __name__ == "__main__":
     print(os.getcwd())
-    print("s09: Memory - selective knowledge across sessions")
+    print("s10: Task System - dependencies and task state")
     print("Enter a question, press Enter to send. Type q to quit.")
-    print("Type /remember <text> to save a memory, /memories to list them.\n")
 
 
     history = [SystemMessage(content=SYSTEM_PROMPT)]
 
     while True:
         try:
-            query = input("\033[36ms09 >> \033[0m")
+            query = input("\033[36ms10 >> \033[0m")
         except (EOFError, KeyboardInterrupt):
             break
         if query.strip().lower() in ("q", "exit", "bye", ""):

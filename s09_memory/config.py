@@ -7,3 +7,6 @@ PS7_PATH = r"C:\Program Files\PowerShell\7\pwsh.exe"
 
 TRANSCRIPT_DIR = WORKDIR / ".transcripts"
 TOOL_RESULTS_DIR = WORKDIR / ".tool-results"
+
+MEMORY_DIR = WORKDIR / ".memory"
+MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"

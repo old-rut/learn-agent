@@ -20,6 +20,9 @@ venv/
 # s09 运行产物：长期记忆存储
 .memory/
 
+# s10 运行产物：任务存储
+.tasks/
+
 # IDE 个人状态（workspace.xml 已由 .idea/.gitignore 覆盖，这里再声明一次以防被 IDE 重写）
 .idea/workspace.xml
 .idea/material_theme_project_new.xml

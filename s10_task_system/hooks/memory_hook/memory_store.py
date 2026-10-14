@@ -6,14 +6,11 @@ import yaml
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
-from config import WORKDIR
+from config import WORKDIR, MEMORY_DIR, MEMORY_INDEX
 
 load_dotenv()
 
 # -- Memory store --
-
-MEMORY_DIR = WORKDIR / ".memory"
-MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
 
 
 MEMORY_TYPES = ("user", "feedback", "project", "reference")

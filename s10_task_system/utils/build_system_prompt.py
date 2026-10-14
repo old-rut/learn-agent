@@ -25,18 +25,28 @@ Skills available:
 
 MAIN_DELEGATION = """
 You own the task end-to-end: clarify with the user, plan, decide, and execute.
-You have two extra tools: `todo_writer` and `subagent`.
+You have these extra tools:
 
-- todo_writer: break a complex task into concrete, trackable steps and update their status as you go
+- create_task: create a task node and return its runtime-generated ID
+- update_task: declare dependencies using IDs returned by create_task
+- list_tasks: list tasks with status, owner, and dependencies
+- get_task: get a task by ID
+- claim_task: claim a pending task whose dependencies are complete
+- complete_task: mark your claimed task done and report unblocked tasks
 - subagent: execute one self-contained subtask in a fresh context and return only its final result
 
 Workflow for complex tasks:
-1. Use `todo_writer` to break the task into concrete steps and track progress.
-2. For each step, decide whether to do it yourself or delegate it to `subagent`.
-3. Delegate when the step is self-contained and executing it would flood this
+1. Use `create_task` to create one task per concrete step. Create all task
+   nodes first, then use `update_task` with the returned IDs to declare
+   dependencies (what must finish before what).
+2. For each task, decide whether to do it yourself or delegate it to `subagent`.
+3. Delegate when the task is self-contained and executing it would flood this
    conversation with tool output you don't need here.
-4. After `subagent` returns, use `todo_writer` to mark that step complete.
-5. Do the remaining steps yourself, and keep ownership of the overall task.
+4. Before starting a task, call `claim_task` to mark it in_progress. It will
+   refuse if any dependency is still incomplete.
+5. After `subagent` returns, call `complete_task` to mark that task done. It
+   will report which tasks are now unblocked.
+6. Do the remaining tasks yourself, and keep ownership of the overall task.
 
 When to use `subagent`:
 - A todo item can be fully described in one self-contained prompt.
@@ -59,7 +69,6 @@ SUB_DELEGATION = """
 You are running as a subagent: execute the given subtask, then return a concise
 final answer. You do not have access to the user or to the main conversation.
 
-- You do NOT have `subagent` or `todo_writer`. Do not attempt to use them.
 - Stay focused on the subtask. Do not expand scope.
 - Return only the final result the caller asked for, not a transcript of your work.
 """

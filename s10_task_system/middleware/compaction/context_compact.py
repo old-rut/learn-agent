@@ -551,18 +551,18 @@ class ContextCompactor:
 
 
 def _current_plan():
-    """把 s05 的 todo 状态重新注入 —— **上下文里承载的状态会被压缩吃掉**。
+    """把 s10 的 tasks 状态重新注入 —— **上下文里承载的状态会被压缩吃掉**。
 
     它是运行时状态，活在历史消息里，middle 一摘要就没了。Claude Code 靠把
-    CLAUDE.md 放进稳定前缀躲开这一点，todo 没这个位置。
+    CLAUDE.md 放进稳定前缀躲开这一点，tasks 没这个位置。
 
-    没建过 todo 时渲染成 "No todos."，让读者明确知道没有计划。
+    没建过 tasks 时渲染成 "No tasks."，让读者明确知道没有计划。
     """
     try:
-        from tools.todo_writer import TODO
-    except Exception:                       # 单独用 estimate/archive 时不强依赖 s05
+        from tools.task_system import render_task_list
+    except Exception:                       # 单独用 estimate/archive 时不强依赖 s10
         return None
-    return TODO.render()
+    return render_task_list()
 
 
 __all__ = ["ContextCompactor", "Report", "MAX_REACTIVE_RETRIES",

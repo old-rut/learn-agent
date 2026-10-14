@@ -1,365 +1,320 @@
-# s09: Memory — 让重要信息跨会话保留下来
+# s10: Task System — 从执行清单到可协调的任务状态
 
-[s01](../s01_loop/) → [s02](../s02_tools/) → [s03](../s03_permission/) → [s04](../s04_hooks/) → [s05](../s05_todo_writer/) → [s06](../s06_subagent/) → [s07](../s07_skill_loader/) → [s08](../s08_context_compact/) → `s09` → s10 → s11 → s12 → s13 → s14 → s15 → s16 → s17
+[s01](../s01_loop/) → [s02](../s02_tools/) → [s03](../s03_permission/) → [s04](../s04_hooks/) → [s05](../s05_todo_writer/) → [s06](../s06_subagent/) → [s07](../s07_skill_loader/) → [s08](../s08_context_compact/) → [s09](../s09_memory/) → `s10` → s11 → s12 → s13 → s14 → s15 → s16 → s17
 
-> *"把以后还会用到的信息留下来。"* — 文件存储 + 索引 + 相关性选择 + 按需召回。
+> *"大目标拆成小任务，排好序，持久化。"* — 文件持久化的任务图，多 agent 协作的基础。
 >
-> **Harness 层**: Memory — 在会话之外保存可复用知识，并在相关任务中取回。
+> **Harness 层**: 任务 — 持久化的目标，可恢复的进度。
 
 ---
 
 ## 问题
 
-s08 把压掉的东西**原样留在了磁盘上**：`.transcripts/` 里躺着一份完整记录，`.tool-results/` 里躺着工具结果原文。
+s09 的结尾埋了一句话：**任务是状态，不是事实。** 记忆系统记的是知识——用户偏好、项目约定，这些是"以后还成立的东西"。管不了的是另一类：**"这个 bug 修到一半"、"第三步等用户确认"**。它们有依赖、有归属、有完成与否，被打断之后要原样恢复。
 
-但模型不知道它们存在，也不会主动去翻。
+s05 的 `todo_writer` 干的就是这件事——但只干了一半。清单里的每一项只有内容和状态，用来提醒模型接下来做什么。当一件事拆成「建表 → 写 API → 加测试」时，Harness 需要知道的不止这些：
 
-于是有些东西每次会话都要重新讲一遍：
+1. **关系。** 表没建完就不能写 API，API 没定就不能加测试。`todo_writer` 能显示"写 API 未完成"，但没有人能据此判断它**能不能开始**——清单没有边。
+2. **分工。** 哪一步自己做、哪一步交给 `subagent`、做完没有——清单不记归属，Harness 无从仲裁。
+3. **寿命。** 清单活在 `messages` 里：会话结束就没了；更糟的是 s08 讲过的那个普遍陷阱——**上下文里承载的状态，会被压缩吃掉**。
 
-- 用户上周说过的偏好（"回答别加 emoji"、"用中文回答"）
-- 项目里约定俗成的做法（"这个仓库只在 Windows 上验证"）
-- 踩过一次的坑（"uv add 会改 pyproject，别用"）
-
-这些都是**跨会话**的。s08 解决的是"这一轮塞不下"，没解决"下一轮想不起来"。
-
-而"记住"不是把对话存档就完事，有三个真问题挡在前面：
-
-1. **什么值得留。** 工具输出、临时状态、本次会话的路径 —— 这些留下去是负债。
-2. **怎么不越存越烂。** 重复的、过时的、互相矛盾的，会随时间堆积。
-3. **什么时候取回来。** 全量塞回上下文等于 s08 白做。
+所以这一章把 todo 整个换掉：**每个任务有独立的 ID 和状态，`blocked_by` 记录前置任务，`owner` 记录谁在做，全部落盘。**
 
 ## 方案
 
-> **两个钩子挂在循环两端：进模型前按当前请求召回几条注入系统提示词，回合结束后从对话里提炼值得长期保留的写进磁盘。**
+> **任务从上下文搬到磁盘：一任务一个 JSON 文件，两个动作（claim / complete）驱动三个状态，依赖构成一张有向无环图。**
 
 ```
 用户提问
    ↓
-[PreAgent]  recall_memory  ──→ 选几条 + 注入 SystemMessage
+agent_loop（和 s09 逐行同构 —— 还短了 12 行，见第 8 步）
    ↓
-   agent_loop（和 s08 一模一样）
+模型调 create_task / update_task / claim_task / complete_task
    ↓
-[PostAgent] extract_memory ──→ 提炼 + 入去重闸门 + 攒够就合并
+TaskStore 校验 → 读写 .tasks/<task_id>.json
 ```
 
-| 事件 | 钩子 | 干什么 | 什么时候 |
-| --- | --- | --- | --- |
-| `PreAgent` | `load_memories` | 选出相关记录，拼进系统提示词 | 每轮提问、进模型**之前** |
-| `PostAgent` | `store_memories` | 从对话提炼新记录，写盘 | 一个回合**结束**、没有工具调用了 |
+状态机只有两个动作、三个状态：
 
-两个事件都挂在 s04 那套 `register_hook` 上 —— 主循环**只知道有两个钩子事件**，不知道"记忆"是什么。
+```
+          claim_task                complete_task
+pending ─────────────→ in_progress ─────────────→ completed
+```
 
-### 核心原理：读路径和 RAG 同形，写路径才是记忆独有的
-
-"取回相关文本塞进上下文"，记忆和 RAG 是同一个形状。真正不一样的在后半段：
-
-| | 检索（RAG） | 记忆 |
+| | todo_writer (s05) | Task System (s10) |
 | --- | --- | --- |
-| 语料谁写 | 人／系统，离线 | **agent 自己，从自己的对话里** |
-| 写入路径 | 没有 | **全部难点在这**：该不该记、去重、合并、纠错 |
-| 会不会变 | 基本不变 | **会变**（本科二年级 → 三年级） |
-| 检索错了 | 引一段无关文字，看得见 | **错的东西注入每一轮系统提示词**，静默塑造一切 |
+| 定位 | 当前任务的执行清单 | 可恢复的任务系统 |
+| 存储 | 进程内的 `messages` | `.tasks/<task_id>.json` |
+| 依赖 | 无 | `blocked_by` 依赖图（带环检测） |
+| 分工 | 不记归属 | `owner` 认领 |
+| 更新契约 | 整表替换 | 单条记录的建 / 读 / 改 / 列 |
+| 压缩 | 会被吃掉（s08 陷阱） | 摘要装配时**从文件重新注入** |
+| 生命周期 | 当前会话 | 跨会话恢复 |
 
-所以这一章九成的代码在写路径上 —— `validate_memory_record`（形状）、
-`should_store_memory`（去留）、三重去重、`TEMPORARY_MEMORY_MARKERS`、
-`consolidate_memories`（合并纠错）。这套东西 RAG 一份都没有。
+### 核心原理：状态放在上下文外面
 
-**换句话说：记忆 ≈ RAG 的读 + 一整套 RAG 没有的写。**
+s08 埋的伏笔在这里兑现。**上下文里承载的状态会被压缩吃掉**——s05 的清单住在 `messages` 里，`middle` 一摘要就没了，所以 s08/s09 不得不在摘要装配时把它重新注入。s10 干脆换个地方住：
+
+- 任务在 `.tasks/` 里，**压缩碰不到**——上下文怎么压，任务图完好无损；
+- 摘要装配照样有 `Current plan:` 槽位，但这次不是从消息里抢救，而是**直接读文件**；
+- 会话结束再开一个，`.tasks/` 还在，读文件就能接着干。
+
+**上下文是工作内存，文件才是状态。** 这是任务系统和记忆系统共享的判断——s09 把知识放到了会话外面，s10 把状态放到了会话外面。
 
 ## 代码怎么走
 
-**第 1 步：先把它挂上去 —— 循环只多两行。**
+**第 1 步：六个字段的最小集。**
 
 ```python
-def agent_loop(messages):
-    rounds_since_todo = 0
-    trigger_hooks("PreAgent", messages)            # ★ 多这一行
-    while True:
-        response = model_with_tools.invoke(messages)
-        ...
-        if not response.tool_calls:
-            force = trigger_hooks("Stop", messages)
-            if force:
-                messages.append(HumanMessage(content=force))
-                continue
-            trigger_hooks("PostAgent", messages)   # ★ 多这一行
-            return
+@dataclass
+class Task:
+    id: str
+    subject: str
+    description: str
+    status: str              # pending | in_progress | completed
+    owner: str | None        # 谁认领了这条任务
+    blocked_by: list[str]    # 前置任务的 ID 列表
 ```
 
-`agent_loop` 从 s08 的 **33 行变成 35 行**，多出来的就是这两句。循环结构、
-工具执行、todo 催促，一行没动。
-
-**这是 s08 那套「循环是骨架，机制是挂件」的又一次验证** —— 而且这次连中间件都没用上，
-一个 s04 就有的钩子事件表就够了。
-
-**第 2 步：存什么 —— 形状和去留分成两层。**
-
-两道闸门职责严格分开，不重叠：
-
-| 函数 | 管什么 | 判据 |
+| 字段 | 角色 | 谁写 |
 | --- | --- | --- |
-| `validate_memory_record` | **形状** | 是 dict、四个字段非空、`type` 在词表里 |
-| `should_store_memory` | **去留** | `scope == "persistent"`、不含临时字眼、不重复 |
+| `id` | 主键：文件名、被 `blocked_by` 引用、工具寻址 | 系统生成，模型只复述 |
+| `subject` / `description` | 内容：一句标题 / 完整细节 | 模型（create_task） |
+| `status` | 状态机 | claim / complete 两个动作 |
+| `owner` | 认领锁 | claim 写入，complete 校验 |
+| `blocked_by` | 依赖边（引用 ID，不是嵌套对象——所以能落盘） | update_task |
 
-`validate` 顺手做归一化（strip 后返回新 dict），`should_store` 只管放不放行。
-中间那个 `scope` 字段由两者交接：**前者原样带过，后者裁决**。
-
-> **踩到的坑：一个不是 bug 的 bug。**
+> **为什么 ID 这么短。**
 >
-> `validate_memory_record` 原来有个 `require_scope` 参数，`extract_memories` 传 `True`。
-> 它放行 `{persistent, current_task}` 两个值 —— 而下一行 `should_store_memory`
-> 只留 `persistent`。
->
-> 也就是第一道闸门刚放行的东西，第二道立刻枪毙。把参数删掉、逐条比对最终去留，
-> 54 组边界用例**结果完全一致** —— 它是个装饰品：看起来在管 scope，其实什么都不管。
+> `task_` + 8 位十六进制（`secrets.token_hex(4)`），不是 UUID。这些 ID 的主要用户是**模型**：create_task 返回它，模型要在 update_task / claim_task / complete_task 里逐字复述——短的省 token，长串抄写出错率也高。43 亿种组合对几十条任务的规模绰绰有余；真撞了，`open("x")` 独占创建 + 重试 100 次兜底。`task_[0-9a-f]{8}` 这个格式本身还是防线：ID 里进不来 `/` 和 `..`，就构造不出逃出 `.tasks/` 的路径。
 
-**第 3 步：什么不该存。**
-
-`TEMPORARY_MEMORY_MARKERS` 有 19 条，中英日三语，因为这一层挡的是**模型的判断**，
-不是用户的输入：
+**第 2 步：TaskStore —— 校验、读写、守卫。**
 
 ```python
-"this session", "current session", "for now", "just this time", "today only",
-"本次会话", "当前任务", "暂时", ...
+def _path(self, task_id: str, create_root: bool = False) -> Path:
+    if not isinstance(task_id, str) or not TASK_ID_PATTERN.fullmatch(task_id):
+        raise ValueError(f"Invalid task ID: {task_id!r}")
+    root = self._root(create=create_root)
+    path = (root / f"{task_id}.json").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError(f"Invalid task ID: {task_id!r}")
+    return path
 ```
 
-命中就拒。理由是这些东西**下周就不成立了**，而记忆是给下周用的。
+读写的四条纪律：
 
-**第 4 步：怎么不越存越烂 —— 三重去重。**
+- **ID 先过格式**——格式顺带挡路径穿越；
+- **存储根目录必须落在 `WORKDIR` 里**，逃出去就拒绝；
+- **创建用 `"x"` 模式**——文件已存在就抛 `FileExistsError`，唯一性闸门住在创建里；
+- **读回时校验两件事**：文件名和记录里的 `id` 一致、`status` 在词表里——盘上的东西不可信。
+
+**第 3 步：两阶段建图。**
+
+任务图分两步搭：先创建所有节点，再拿返回的 ID 连边。
+
+> **为什么不能一步到位。**
+>
+> 模型可以在一条回复里同时发出多个工具调用，而**同一批调用在任何一个结果产生之前就已经全部确定**——`create_task` 的参数里引用不了兄弟调用还没生成的 ID。所以提示词的工作流里明确教了这个顺序：
+>
+> ```text
+> 1. Use `create_task` to create one task per concrete step. Create all task
+>    nodes first, then use `update_task` with the returned IDs to declare
+>    dependencies (what must finish before what).
+> ```
+
+**第 4 步：连边前的四道检查。**
+
+`update_dependencies` 在保存前把整批依赖验完：
+
+| 检查 | 失败时 |
+| --- | --- |
+| 自依赖 | `Task cannot depend on itself` |
+| 依赖存在 | `Dependency not found: task_…` |
+| 成环（沿 `blocked_by` 递归走） | `Dependency cycle detected: … -> …` |
+| 重复添加 | **静默去重**——已有边不重复写 |
+
+实测：
 
 ```
-同 slug？           memory_slug(name) 归一后一样        → 拒
-同 description？    _normalized_memory_text 后全等      → 拒
-同 body？           同上                                → 拒
+self   -> Task cannot depend on itself
+cycle  -> Dependency cycle detected: task_e4846fa5 -> task_a8b22133
+missing-> Dependency not found: task_00000000
+同一条边加两次 -> ['task_e4846fa5']（仍是一条）
 ```
 
-`_normalized_memory_text` 做的是 `" ".join(value.lower().split())` —— 大小写和空白差异
-不该算两条。
+还有一个时间闸门：**依赖图只在 `pending` 且无人认领时可改。** 动工之后边就冻结了——给进行中的任务半路加依赖，状态机和依赖图就对不上了。
 
-> **顺带堵掉的一个洞：`memory` 这个名字。**
->
-> `memory_slug("memory")` 得到 `"memory"`，文件名就是 `memory.md`。而索引是 `MEMORY.md`。
-> 守卫写的是 `filename == MEMORY_INDEX.name` —— **字符串比较，大小写敏感**。
->
-> Windows/macOS 的文件系统不敏感，所以 `memory.md` 就是 `MEMORY.md`：
-> `write_memory_file` 把记录写进去，紧接着 `rebuild_memory_index()` 又把它覆盖回索引。
-> 结果**函数返回成功、路径看着正常、记录消失、不报错**。
->
-> 现在两处都堵了：`memory_slug` 不再产出索引名，`memory_path` 改成大小写不敏感比较。
+**第 5 步：claim / complete —— 两个动作。**
 
-**第 5 步：攒够了就合并 —— 但先快照。**
-
-`CONSOLIDATE_THRESHOLD = 10`：库里攒到 10 条以上、**且这一轮确实存进了新东西**，
-才触发一次合并，让模型去重、用新的覆盖旧的、删掉没用的。
-（合并跟着写入走，不单独扫盘 —— 没写就没必要重算。）
-这一步是**破坏性**的（先删光再重写），所以：
+claim 是两道闸门，过完才写 owner：
 
 ```python
-snapshot = {文件名: 原文}          # 动手之前先全存下来
-try:
-    删光 → 重写 → 重建索引
-except Exception:
-    删光 → 从 snapshot 按字节还原 → 重建索引
-    raise                          # 异常照旧抛出去，不吞
+def claim_task(task_id: str, owner: str = "agent") -> str:
+    task = load_task(task_id)
+    if task.status != "pending":
+        return f"Task {task_id} is {task.status}, cannot claim"
+    dependencies = incomplete_dependencies(task)
+    if dependencies:
+        return f"Blocked by: {dependencies}"
+    task.owner = owner
+    task.status = "in_progress"
+    TASKS.save(task)
+    ...
 ```
 
-实测：制造一个 slug 冲突让合并中途失败，12 个文件**逐个字节还原**，无残留、索引完好。
-输入超过 `CONSOLIDATE_INPUT_CHAR_LIMIT` 则直接拒绝，一个字都不动。
+complete 除了状态闸门还查归属——**别人认领的任务你不能替他完成**；并且只报告**刚刚**被解锁的下游：`ready_before` 记下完成前就能开工的任务，完成后只报差集，之前就绪的不算"新解锁"。
 
-**第 6 步：召回 —— 目录全量，正文按需。**
+实测（四节点：schema → endpoints → tests，docs ← schema）：
 
 ```
-SystemMessage = SYSTEM_PROMPT
-              + RECALL_NOTE
-              + Memory catalog:        ← 每条记录的 name + description，全量
-              + Relevant memory records: ← 相关记录的完整正文，按需
+Claimed task_39f6c7c2 (design schema)
+Completed task_39f6c7c2 (design schema)
+Unblocked: implement endpoints, write docs      ← 扇出：两个下游同时解锁
+
+Claimed task_5acf693b (implement endpoints)
+Unblocked: write tests                          ← 链式：一层一层往下走
+
+[ ] task_26f760e1: write tests [pending] (blocked_by: task_5acf693b)
+[x] task_39f6c7c2: design schema [completed] [agent]
+[x] task_5acf693b: implement endpoints [completed] [agent] (blocked_by: task_39f6c7c2)
+[ ] task_ef644da7: write docs [pending] (blocked_by: task_39f6c7c2)
 ```
 
-目录是 `MEMORY.md` 原文，每轮都整个注入。正文再按当前请求挑几条 —— 挑的动作就是
-下面那个 box 说的。
+认领被拒（依赖未完成）时**只返回原因，不落盘、不打日志**——拒绝不是状态变更。
 
-> **这一步的检索可以换成 RAG 检索。**
->
-> 现在的实现是**一次模型调用**：把目录发给模型，让它返回相关条目在目录里的**下标**
-> （`max_tokens=200`）。这是 LLM-as-retriever，不是 RAG 的检索器 —— 所以它慢，
-> 而且慢在**每轮提问的关键路径上**，用户得等。
->
-> 规模小的时候这笔开销不划算：目录（每条记录的 name + description）本来就每轮全量注入，
-> 那次调用往返一趟，只为了决定"正文取哪几条"，而**全部正文加起来也就和目录一个量级**。
-> 换成关键词或向量检索（都是毫秒级、零网络）能直接省掉这次往返；盘大了再换向量库，
-> 调用方的接口不用动。
->
-> 文件里已经有一个关键词版本 `keyword_memory_selection`，但它现在是 `except` 上的兜底，
-> 而且**中文切词是坏的**：正则 `[一-鿿]{2,}` 会把整段连续中文当成一个词，
-> 于是 `"你是谁"` 切出 `{"你是谁"}`，在目录里当然找不到，一条都选不出来。
-> 英语恰好正常（`[a-z0-9_]{3,}` 按空白切好了）。
->
-> 所以它现在算不上兜底 —— LLM 调用一失败，召回会**静默退化成"什么都不召回"**。
-> 要拿它当默认，得先把切词改成 2-gram 滑窗。
-
-**第 7 步：注入的东西得说清它是什么。**
-
-一句话，压在两个标题前面（**只在真有东西可注入时才加** —— 空库时说"内容已经在这里了"是假的）：
+**第 6 步：工具壳 —— 名字是给模型的。**
 
 ```python
-RECALL_NOTE = (
-    "Below is long-term memory about the user, recalled from earlier sessions. "
-    "The content is already included here — treat it as known background and "
-    "do not read the memory files again unless it is genuinely necessary."
-)
+@tool("create_task")
+def run_create_task(subject: str, description: str = "") -> str:
+    """Create a task and return its runtime-generated ID."""
+    task = create_task(subject, description)
+    ...
 ```
 
-（模型侧的提示词全仓库都是英文，这句也照此。）
+`@tool` 默认拿函数名当工具名，模型会看到 `run_create_task`。这里显式传短名：**工具名是模型看到的名字，函数名是实现细节**。SYSTEM_PROMPT 里的工作流教的就是短名，两边必须逐字一致——提示词指着一个不存在的名字说话，和 s09 那次"提示词只要三个字段、校验要四个"是同一类病。
 
-> **为什么需要这句话 —— 实测出来的。**
+> **踩到的坑：@tool 对象不能当函数调。**
 >
-> 目录是 markdown 链接 `- [名字](文件名.md) - 描述`，记录是
-> `{"source": "文件名.md", "content": "..."}`。两处都在用**文件的语言**。
->
-> 于是问一句"你是谁"，模型的反应是挨个把文件打开：
+> 压缩的摘要装配要把任务列表重新注入，最初直接写了 `run_list_tasks()`——实测炸了：
 >
 > ```
-> [HOOK] PreToolUse: read_file(['project_working_directory.md'])
-> [HOOK] PreToolUse: read_file(['用户偏好-缩进风格.md'])
-> [HOOK] PreToolUse: pwsh(['Get-ChildItem -Recurse -Depth 2 | ...'])
+> TypeError: 'StructuredTool' object is not callable
 > ```
 >
-> 它读的正是目录里那两个链接的目标，一字不差。**全文其实已经注入在 records 里了** ——
-> 但它不知道这件事。加这句就是告诉它。
-
-**第 8 步：显式入口 —— 用户说"记住"就不该由启发式裁决。**
-
-`/remember` 走的是另一条路：**不经过 `should_store_memory`**。
-
-理由是那三道闸门（scope 门槛、临时字眼、去重）都是用来**替用户猜**"这条值不值得长期记住"的。
-用户一旦明说"记住"，就没有可猜的了 —— 拿猜测器去否决一条指令是用错了权威。
-
-实测同一句话走两条路：
-
-```
-/remember 记住：暂时用 tabs 缩进，以后再说
-    命令行  → 落盘成功
-    提取路径 → should_store_memory = False    ← 命中 "暂时"，静默丢弃
-```
-
-模型在这里只干一件事：**把一段自由文本拆成 `name` / `description` / `body`**，
-去留由用户决定。
-
-> **两个坑。**
+> `@tool` 之后它就不再是函数。模型侧没事（`execute_tool` 走 `.invoke(args)`），内部调用方却踩空。修法不是让中间件学 `.invoke({})`——那是把工具协议的知识塞给不需要它的人——而是把渲染抽成裸函数：
 >
-> 一、`type` 不问模型。它在这一层已经定死是 `user`（用户亲手 `/remember` 的就是用户偏好），
-> 让模型复述一个已经定死的常量，只会多一个出错的地方 —— 第一版就在这儿翻了车：
-> 提示词只要 `name/description/body` 三个字段，而 `validate_memory_record` 要求四个，
-> 于是**每一次 `/remember` 都必然失败**。
+> ```python
+> def render_task_list() -> str:        # 裸逻辑，内部调用方用这个
+>     ...
 >
-> 二、`body` 不能"逐字保留"。第一版提示词写的是 `body keeps the full detail verbatim`，
-> 结果 description 是第三人称、body 是"我习惯用 4 空格缩进" —— **同一个文件里两种人称**。
-> 而这条记录将来是被塞进**另一个会话的系统提示词**的，那里的"我"最自然会被读成**助手**自己。
-> 现在改成要求第三人称、自足（把"这个""上面说的"展开）、但具体信息（路径、名字、版本）不许洗掉。
+> @tool("list_tasks")
+> def run_list_tasks() -> str:          # 薄壳，模型用这个
+>     """List tasks with status, owner, and dependencies."""
+>     return render_task_list()
+> ```
 
-**第 9 步：命令层。**
+**第 7 步：压缩时重新注入 —— s08 的槽位，s10 的数据源。**
 
-`/compact`、`/remember`、`/memories` 统一挂在顶层的 `commands.py`：
+s08 的摘要装配里有个 `Current plan:` 槽位，专门放"压不掉、就重新注入"的状态。s10 换了数据源：
 
 ```python
-register("/remember", remember)      # 命令层自带的
-register("/memories", memories)
-register("/compact", COMPACTION.compact_now)   # 组装点挂上来的
+def _current_plan():
+    try:
+        from tools.task_system import render_task_list
+    except Exception:                       # 单独用 estimate/archive 时不强依赖 s10
+        return None
+    return render_task_list()
 ```
 
-**注册只有一个入口。** `/compact` 得从外面挂，是因为压缩器是运行时才建出来的**对象**，
-它的处理函数是个绑定方法 —— 命令层不 `import` 中间件，谁建的谁挂。
+没建过任务时渲染成 `No tasks. Use create_task to add some.`——让读摘要的人明确知道没有计划，而不是留一个空标题。
 
-认不出的 `/` 命令只提示、不提问：错字不该变成一次真实的模型调用。
+和 s08 的差别值得点破：那时候 `Current plan:` 是从消息里**抢救**出来的（todo 活在上下文里，摘要前不捞就没了）；现在是从文件里**读**出来的——状态本来就在上下文外面，压缩对它无能为力。
+
+**第 8 步：主循环变短了。**
+
+s05 在 `agent_loop` 里埋了段催促：三轮没动清单就注入一条 `<reminder>Update your todos.</reminder>`。s10 把它**整块删了**：
+
+```text
+agent_loop:  s09 的 35 行 → 23 行
+```
+
+不是"忘了写催促"，是**催促的职责消失了**。它原来提醒的是"去更新清单"；现在清单就是任务本身，推进由两边的闸门保证——工具侧，claim 拒绝未就绪的任务；提示词侧，工作流写明了 claim / complete 的时机。循环里不再需要任何人盯着。
+
+**主循环从 s01 到 s10 一次都没改过结构，这是第一次变短——不是加机制，是把一段机制从循环里搬了出去。**
 
 ## 跑起来
 
 ```bash
-uv run python s09_memory/main_loop.py
+uv run python s10_task_system/main_loop.py
 ```
 
-`WORKDIR` 取自 `__file__`，所以在仓库根启动也没问题。
+试试这些 prompt：
 
-### 手动命令
+1. `创建任务：设计数据库 schema、实现 API（依赖 schema）、写测试（依赖 API）、写文档（依赖 schema），先建节点再连依赖`
+2. `列出所有任务和状态`
+3. `认领第一个没有被阻塞的任务，完成后告诉我谁被解锁了`
+4. `再列一次任务——哪些现在可以开始了？`
 
-```
-s09 >> /remember 我习惯用 4 空格缩进
-[memory] 已记住 [缩进偏好：4 空格] -> 缩进偏好-4-空格.md
-         用户习惯用 4 个空格缩进，不用 tab。
-
-s09 >> /memories
-[memory] 1 条：
-  [user] 缩进偏好：4 空格 — 用户习惯用 4 个空格缩进，不用 tab。
-```
-
-`/memories` 从记录现场读，不走索引文件 —— 免得索引过期时看到的和实际对不上。
+观察重点：`.tasks/` 下是否生成了 JSON 文件；完成任务后，被阻塞的任务是否出现在 `Unblocked:` 里。
 
 ### 看哪里
 
 ```bash
-cat s09_memory/.memory/MEMORY.md            # 索引：每题一行 name + description
-cat s09_memory/.memory/<名字>.md            # 每条记录：YAML frontmatter + 正文
+ls s10_task_system/.tasks/                # 一任务一个 JSON
+cat s10_task_system/.tasks/task_<id>.json  # 纯 JSON：六个字段，indent=2
 ```
 
-`.memory/` 是运行产物，已在 `.gitignore` 里。
-
-**每个钩子喊一声。** 终端上每条 `[HOOK] <事件名>: <内容>` 就是一次触发：
+`.tasks/` 是运行产物，已在 `.gitignore` 里。终端上每次任务操作都有痕：
 
 ```
-[HOOK] UserPromptSubmit: working in D:\...\s09_memory
-[HOOK] PreAgent: recalling memories
-[HOOK] PreToolUse: permission gate read_file
-[HOOK] PreToolUse: read_file(['config.py'])
-[HOOK] Stop: session used 1 tool calls
-[HOOK] PostAgent: storing memories
+  [create] design schema
+  [update] implement endpoints blocked_by: task_39f6c7c2
+  [claim] design schema -> in_progress (owner: agent)
+  [complete] design schema
+  [unblocked] implement endpoints, write docs
 ```
-
-### 每轮要调几次模型
-
-这是这一章的性能账，值得摊开：
-
-| 时机 | 调用 | 备注 |
-| --- | --- | --- |
-| `PreAgent` | 选相关记录 | **在关键路径上**，用户要等 |
-| `PostAgent` | 提炼新记录 | 答案已经拿到，但打印要等它返回 |
-| `PostAgent` | 合并 | 只在攒够 10 条时 |
-
-记忆系统不是免费的。写路径的那两次尤其值得换掉 —— 见第 6 步那个 box。
 
 ## 目录结构的变化
 
 ```
-s09_memory/
-├── config.py
-├── commands.py                 ★ 命令层：注册表 + 分发（本章新增）
-├── hooks/
-│   ├── memory_hook/            ★ 记忆子系统（本章新增）
-│   │   ├── memory_store.py     读写 + 索引 + 去重 + 路径守卫
-│   │   ├── recall_memory.py    PreAgent：选 + 注入
-│   │   ├── extract_memory.py   PostAgent：提炼 + 合并
-│   │   └── memory_commands.py  /remember、/memories
-│   ├── trigger_hooks.py        ★ 多了 PreAgent / PostAgent 两个事件
-│   ├── other_hooks.py          与 s08 相同
-│   └── permission_hook.py      与 s08 相同
-├── middleware/compaction/      与 s08 相同
+s10_task_system/
+├── config.py                   ★ 多了 TASKS_DIR（s09 的 MEMORY_DIR/MEMORY_INDEX 也一并挪进了 config）
+├── commands.py                 与 s09 相同
+├── hooks/                      与 s09 相同（memory 系统原样保留）
+├── middleware/compaction/
+│   └── context_compact.py      ★ Current plan: 槽位换数据源：todo → tasks
 ├── tools/
+│   ├── task_system.py          ★ 本章新增：Task / TaskStore / 六个任务工具
+│   ├── todo_writer.py          ✗ 删除——被 task_system 取代
+│   ├── base_tools.py           六个基础工具，与 s09 相同
+│   ├── subagent.py             与 s09 相同
+│   └── ...                     file_tools / pwsh / skill_loader
 ├── utils/
+│   ├── build_system_prompt.py  ★ MAIN_DELEGATION 换成任务工作流（建节点 → 连边 → claim → complete）
+│   └── ...                     execute_tool / stream_print / extract_text
 ├── skills/
-└── main_loop.py                ★ agent_loop 只多两行
+└── main_loop.py                ★ agent_loop 删掉催促：35 → 23 行
 ```
 
-**记忆是钩子，不是中间件。** s08 的压缩包在模型外面，因为它要**改 `messages`**；
-记忆只在两个确定的时刻读一次、写一次，没有"每次调模型前都过一遍"的需求，
-所以挂在事件上更贴切。这也让 `main_loop.py` 的改动比 s08 还小。
+**工具的注册只有一张表。** `tools_register.py` 把六个任务工具和基础工具、subagent 并进同一个 `TOOLS`：
 
-**子包自足。** `memory_commands.py` 里那句 `type` 定死、`memory_store.py` 里的路径守卫，
-都不认识 `main_loop.py`；`commands.py` 也不认识中间件。谁建的谁挂。
+```python
+task_system_tools = [run_create_task, run_update_task, run_claim_task,
+                     run_list_tasks, run_get_task, run_complete_task]
+TOOLS = BASE_TOOLS + [subagent] + task_system_tools
+TOOLS_HANDERS = {t.name: t for t in TOOLS}
+```
+
+`t.name` 是装饰器传的短名（`create_task`…），和工具调用里的 `name` 字段直接对上——调度表不用单独维护一份映射。
+
+**任务的知识只在两处。** 实现在 `task_system.py`，教法在 `build_system_prompt.py`；压缩中间件只认 `render_task_list` 一个裸函数，不认识任务长什么样。
 
 ---
 
 ## 阶段回顾
 
-从 s01 到现在，主循环**一次都没有改过结构**：
+从 s01 到现在，主循环一次都没有改过结构：
 
 ```python
 while True:
@@ -385,23 +340,17 @@ while True:
 | s07 | 循环外 | 系统提示的内容策略 |
 | s08 | 循环外 | 在模型外面包一层，改掉它看到的 `messages` |
 | s09 | 循环两端 | 两个钩子事件：进前召回，出后提炼 |
+| s10 | 文件系统 + 工具层 | 任务落盘成 DAG；循环里**删**掉 12 行 |
 | … | | 这张表会随章节继续往下长 |
 
-s09 是**第一次复用已有机制、不引入新机制**的章节 —— 没有新的层、没有新的协议，
-只是在 s04 的事件表上多了两个事件。`agent_loop` 33 行 → 35 行。
+s05 那一行，这一章动了两处：**状态还在，住址变了**——从 `messages` 搬进文件，压缩和会话结束都伤不到它；**催促没了**——推进改由工具闸门和提示词工作流保证。
 
-**前八章攒下的东西，这一章开始还债了。**
+**s10 是第一章让主循环变短的章节。** 机制没有变多：todo 整个被任务系统替换，上下文里少了一个需要提醒、会被压缩吃掉的活物。
 
 ---
 
 ## 下一步
 
-记忆解决了"跨会话记得住"，但记的是**知识**。有一类东西它管不了：**任务**。
+任务图能表达"什么等什么"了，但执行还是同步的：`pwsh` 里跑全量测试、装依赖，可能要几分钟——`agent_loop` 停在那个工具调用上干等，期间什么也做不了。
 
-"这个 bug 修到一半"、"第三步等用户确认"、"剩下的明天接着做" —— 这些是**状态**，
-不是事实。它们有依赖关系、有完成与否、需要在被打断之后原样恢复，
-而且**不能靠模型判断该不该记**。
-
-s05 的 `todo_writer` 是个开始，但它是模型自己管的、活在上下文里、会话一结束就没了。
-
-→ s10 Task System：把任务从上下文里拿出来，变成一个可以落盘、有依赖、能恢复的对象？
+→ s11 Background Tasks：把慢操作放到后台。Agent 继续处理别的任务，后台跑完再接通知。
